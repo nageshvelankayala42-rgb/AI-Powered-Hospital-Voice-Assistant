@@ -5,8 +5,9 @@ from datetime import date, datetime, timedelta
 
 import mysql.connector
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 from openai import OpenAI
+from twilio.twiml.voice_response import Gather, VoiceResponse
 
 load_dotenv()
 
@@ -15,6 +16,23 @@ app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
 
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 schema_checked = False
+call_sessions = {}
+VOICE_FIELDS = [
+    "patient_name",
+    "patient_email",
+    "symptoms",
+    "appointment_date",
+    "appointment_time",
+    "doctor_id",
+]
+FIELD_PROMPTS = {
+    "patient_name": "Please tell me your full name.",
+    "patient_email": "Please say your email address slowly, or say skip email for now.",
+    "symptoms": "Please describe your symptoms briefly.",
+    "appointment_date": "Which date would you like? You can say tomorrow, today, or a date like 2026 dash 05 dash 20.",
+    "appointment_time": "Which available time slot would you like?",
+    "doctor_id": "Which doctor would you prefer, or should I recommend one?",
+}
 
 
 def get_db_connection():
@@ -39,6 +57,34 @@ def execute_query(query, params=None):
             cursor.execute(query, params or ())
             connection.commit()
             return cursor.lastrowid
+
+
+def xml_response(twiml):
+    return Response(str(twiml), mimetype="text/xml")
+
+
+def voice_gather(prompt, action="/voice/respond"):
+    response = VoiceResponse()
+    gather = Gather(
+        input="speech",
+        action=action,
+        method="POST",
+        speech_timeout="auto",
+        timeout=5,
+        language="en-IN",
+    )
+    gather.say(prompt, voice="alice", language="en-IN")
+    response.append(gather)
+    response.say("I did not hear anything. Let us try again.", voice="alice", language="en-IN")
+    response.redirect(action, method="POST")
+    return xml_response(response)
+
+
+def voice_say_and_hangup(message):
+    response = VoiceResponse()
+    response.say(message, voice="alice", language="en-IN")
+    response.hangup()
+    return xml_response(response)
 
 
 def ensure_schema_updates():
@@ -181,6 +227,110 @@ def parse_ai_json(text):
     return json.loads(cleaned)
 
 
+def normalize_spoken_date(text):
+    if not text:
+        return ""
+
+    spoken = text.lower().strip()
+    today = date.today()
+    if "today" in spoken:
+        return today.isoformat()
+    if "tomorrow" in spoken:
+        return (today + timedelta(days=1)).isoformat()
+
+    cleaned = (
+        spoken.replace(" dash ", "-")
+        .replace(" slash ", "/")
+        .replace(" hyphen ", "-")
+        .replace(" ", "")
+    )
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(cleaned, fmt).date().isoformat()
+        except ValueError:
+            pass
+    return ""
+
+
+def normalize_spoken_time(text, slots):
+    if not text:
+        return ""
+
+    spoken = text.lower().replace(".", "").strip()
+    spoken = spoken.replace("a m", "am").replace("p m", "pm")
+    spoken = spoken.replace("a.m", "am").replace("p.m", "pm")
+
+    for slot in slots:
+        if slot.lower().replace(" ", "") in spoken.replace(" ", ""):
+            return slot
+
+    if "morning" in spoken and slots:
+        return slots[0]
+    if "afternoon" in spoken and slots:
+        return slots[len(slots) // 2]
+
+    return ""
+
+
+def find_doctor_from_text(text, doctors):
+    spoken = text.lower()
+    for doctor in doctors:
+        name_parts = doctor["name"].lower().replace("dr.", "").split()
+        if doctor["specialty"].lower() in spoken:
+            return doctor
+        if any(part and part in spoken for part in name_parts):
+            return doctor
+    return None
+
+
+def make_placeholder_email(phone):
+    digits = "".join(character for character in phone if character.isdigit())
+    return f"caller{digits or 'unknown'}@phone.local"
+
+
+def get_voice_session(call_sid, caller_phone):
+    if call_sid not in call_sessions:
+        call_sessions[call_sid] = {
+            "patient_name": "",
+            "patient_email": "",
+            "patient_phone": caller_phone or "",
+            "symptoms": "",
+            "appointment_date": "",
+            "appointment_time": "",
+            "doctor_id": "",
+            "last_prompt": "symptoms",
+            "confirmed": False,
+        }
+    return call_sessions[call_sid]
+
+
+def missing_voice_fields(session):
+    missing = []
+    for field in VOICE_FIELDS:
+        if not str(session.get(field, "")).strip():
+            missing.append(field)
+    return missing
+
+
+def available_slot_text(doctor_id, appointment_date):
+    if not doctor_id or not appointment_date:
+        return ""
+    slots = get_available_slots(int(doctor_id), appointment_date)
+    if not slots:
+        return "No open slots are available for that doctor on that date."
+    return "Available slots are " + ", ".join(slots[:6]) + "."
+
+
+def build_booking_summary(session):
+    doctor = get_doctor(int(session["doctor_id"]))
+    return (
+        f"I have {session['patient_name']} for {doctor['name']}, "
+        f"{doctor['specialty']}, on {session['appointment_date']} at "
+        f"{session['appointment_time']}. Say confirm booking to book it, "
+        "or say change details."
+    )
+
+
 def ai_recommendation(symptoms, doctors):
     doctor_context = "\n".join(
         f"{doctor['id']}. {doctor['name']} - {doctor['specialty']}, "
@@ -275,6 +425,41 @@ next_action, should_book, missing_fields
     return parse_ai_json(response.output_text)
 
 
+def ai_voice_update(message, doctors, session):
+    doctor_context = "\n".join(
+        f"{doctor['id']}. {doctor['name']} - {doctor['specialty']}, "
+        f"available {doctor['available_days']} ({doctor['available_time']})"
+        for doctor in doctors
+    )
+
+    prompt = f"""
+You are controlling a hospital phone-call appointment assistant.
+Extract booking details from the caller's latest speech.
+Do not diagnose. If symptoms sound urgent, set urgency to emergency.
+
+Today is {date.today().isoformat()}.
+Current call state:
+{json.dumps(session, indent=2)}
+
+Available doctors:
+{doctor_context}
+
+Caller said:
+{message}
+
+Return only valid JSON with these keys:
+patient_name, patient_email, symptoms, requested_date, requested_time,
+doctor_id, wants_booking, wants_change, urgency, reply
+Use empty strings for unknown values.
+"""
+
+    response = openai_client.responses.create(
+        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        input=prompt,
+    )
+    return parse_ai_json(response.output_text)
+
+
 def fallback_chat_reply(message, doctors, symptoms=""):
     combined_text = f"{symptoms} {message}".strip()
     recommendation = fallback_recommendation(combined_text, doctors)
@@ -298,9 +483,166 @@ def fallback_chat_reply(message, doctors, symptoms=""):
     }
 
 
+def fallback_voice_update(message, doctors, session):
+    doctor = find_doctor_from_text(message, doctors)
+    symptoms = session.get("symptoms") or message
+    recommendation = fallback_recommendation(symptoms, doctors)
+    return {
+        "patient_name": "",
+        "patient_email": "",
+        "symptoms": symptoms,
+        "requested_date": normalize_spoken_date(message),
+        "requested_time": "",
+        "doctor_id": str(doctor["id"] if doctor else recommendation["recommended_doctor_id"]),
+        "wants_booking": "book" in message.lower() or "confirm" in message.lower(),
+        "wants_change": "change" in message.lower(),
+        "urgency": recommendation["urgency"],
+        "reply": "",
+    }
+
+
 @app.before_request
 def before_request():
     ensure_schema_updates()
+
+
+def apply_voice_update(session, update, speech, doctors):
+    for field in ("patient_name", "patient_email", "symptoms"):
+        value = str(update.get(field, "")).strip()
+        if value:
+            session[field] = value
+
+    if "skip email" in speech.lower() and not session.get("patient_email"):
+        session["patient_email"] = make_placeholder_email(session.get("patient_phone", ""))
+
+    requested_date = normalize_spoken_date(update.get("requested_date", "") or speech)
+    if requested_date:
+        session["appointment_date"] = requested_date
+
+    doctor_id = str(update.get("doctor_id", "")).strip()
+    if doctor_id.isdigit() and get_doctor(int(doctor_id)):
+        session["doctor_id"] = doctor_id
+    else:
+        doctor = find_doctor_from_text(speech, doctors)
+        if doctor:
+            session["doctor_id"] = str(doctor["id"])
+
+    if not session.get("doctor_id") and session.get("symptoms"):
+        recommendation = fallback_recommendation(session["symptoms"], doctors)
+        session["doctor_id"] = str(recommendation["recommended_doctor_id"])
+
+    if session.get("doctor_id") and session.get("appointment_date"):
+        slots = get_available_slots(
+            int(session["doctor_id"]),
+            session["appointment_date"],
+        )
+        requested_time = normalize_spoken_time(
+            update.get("requested_time", "") or speech,
+            slots,
+        )
+        if requested_time:
+            session["appointment_time"] = requested_time
+
+
+def book_voice_appointment(session):
+    data = {
+        "patient_name": session["patient_name"],
+        "patient_email": session["patient_email"],
+        "patient_phone": session["patient_phone"],
+        "symptoms": session["symptoms"],
+        "appointment_date": session["appointment_date"],
+        "appointment_time": session["appointment_time"],
+        "doctor_id": int(session["doctor_id"]),
+    }
+
+    available_slots = get_available_slots(data["doctor_id"], data["appointment_date"])
+    if data["appointment_time"] not in available_slots:
+        return None
+
+    return execute_query(
+        """
+        INSERT INTO appointments
+            (patient_name, patient_email, patient_phone, symptoms,
+             appointment_date, appointment_time, doctor_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            data["patient_name"],
+            data["patient_email"],
+            data["patient_phone"],
+            data["symptoms"],
+            data["appointment_date"],
+            data["appointment_time"],
+            data["doctor_id"],
+        ),
+    )
+
+
+@app.route("/voice", methods=["GET", "POST"])
+def voice():
+    call_sid = request.values.get("CallSid", "local-call")
+    caller_phone = request.values.get("From", "")
+    get_voice_session(call_sid, caller_phone)
+    return voice_gather(
+        "Hello, you have reached the hospital appointment assistant. "
+        "Please tell me your symptoms or which doctor you want to book."
+    )
+
+
+@app.route("/voice/respond", methods=["GET", "POST"])
+def voice_respond():
+    call_sid = request.values.get("CallSid", "local-call")
+    caller_phone = request.values.get("From", "")
+    speech = request.values.get("SpeechResult", "").strip()
+    session = get_voice_session(call_sid, caller_phone)
+    doctors = get_doctors()
+
+    if not speech:
+        return voice_gather("I did not catch that. Please say it again.")
+
+    if "goodbye" in speech.lower() or "hang up" in speech.lower():
+        call_sessions.pop(call_sid, None)
+        return voice_say_and_hangup("Thank you for calling. Goodbye.")
+
+    try:
+        update = ai_voice_update(speech, doctors, session)
+    except Exception:
+        update = fallback_voice_update(speech, doctors, session)
+
+    apply_voice_update(session, update, speech, doctors)
+
+    if update.get("urgency") == "emergency":
+        return voice_say_and_hangup(
+            "Your symptoms may need urgent medical attention. "
+            "Please call emergency services or go to the nearest emergency department now."
+        )
+
+    if "change" in speech.lower() or update.get("wants_change"):
+        session["appointment_time"] = ""
+        return voice_gather("Sure. Which date or time would you like instead?")
+
+    if ("confirm" in speech.lower() or update.get("wants_booking")) and not missing_voice_fields(session):
+        appointment_id = book_voice_appointment(session)
+        if appointment_id:
+            doctor = get_doctor(int(session["doctor_id"]))
+            call_sessions.pop(call_sid, None)
+            return voice_say_and_hangup(
+                f"Done. Your appointment is booked with {doctor['name']} "
+                f"on {session['appointment_date']} at {session['appointment_time']}. "
+                f"Your appointment ID is {appointment_id}. Thank you."
+            )
+        session["appointment_time"] = ""
+        return voice_gather("That slot is no longer available. Please choose another time.")
+
+    missing = missing_voice_fields(session)
+    if missing:
+        next_field = missing[0]
+        extra = ""
+        if next_field == "appointment_time":
+            extra = available_slot_text(session.get("doctor_id"), session.get("appointment_date"))
+        return voice_gather(f"{update.get('reply') or ''} {extra} {FIELD_PROMPTS[next_field]}".strip())
+
+    return voice_gather(build_booking_summary(session))
 
 
 @app.route("/")

@@ -2,3 +2,4 @@ Flask==3.0.3
 mysql-connector-python==9.0.0
 openai==1.93.0
 python-dotenv==1.0.1
+twilio>=9.0.0
