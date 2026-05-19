@@ -1,0 +1,251 @@
+:root {
+    color-scheme: light;
+    --bg: #f5f7fb;
+    --panel: #ffffff;
+    --text: #172033;
+    --muted: #677189;
+    --primary: #176b87;
+    --primary-dark: #0f4c5c;
+    --line: #dce3ee;
+    --success: #157347;
+    --danger: #b42318;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: Arial, Helvetica, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+}
+
+.app-shell {
+    width: min(1180px, calc(100% - 32px));
+    margin: 32px auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.9fr);
+    gap: 24px;
+}
+
+.booking-panel,
+.chat-panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 28px;
+    box-shadow: 0 18px 45px rgba(23, 32, 51, 0.08);
+}
+
+.eyebrow {
+    margin: 0 0 8px;
+    color: var(--primary);
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0;
+}
+
+h1,
+h2 {
+    margin: 0 0 22px;
+}
+
+form {
+    display: grid;
+    gap: 18px;
+}
+
+label {
+    display: grid;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 700;
+}
+
+input,
+textarea,
+select {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 12px 14px;
+    font: inherit;
+    color: var(--text);
+    background: #fff;
+}
+
+textarea {
+    resize: vertical;
+}
+
+button {
+    border: 0;
+    border-radius: 6px;
+    padding: 13px 18px;
+    font: inherit;
+    font-weight: 700;
+    color: #fff;
+    background: var(--primary);
+    cursor: pointer;
+}
+
+button:hover {
+    background: var(--primary-dark);
+}
+
+button:disabled {
+    cursor: wait;
+    opacity: 0.72;
+}
+
+.two-column {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.quick-symptoms {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.quick-symptoms button {
+    min-height: 40px;
+    padding: 8px 10px;
+    color: var(--primary);
+    background: #eaf7fb;
+    border: 1px solid #b9dce8;
+}
+
+.quick-symptoms button:hover {
+    color: #fff;
+    background: var(--primary);
+}
+
+.recommendation {
+    border: 1px solid #9fd3c7;
+    border-radius: 8px;
+    padding: 16px;
+    background: #eefaf7;
+    line-height: 1.5;
+}
+
+.recommendation ul {
+    margin: 10px 0;
+    padding-left: 20px;
+}
+
+.urgent {
+    color: var(--danger);
+    font-weight: 700;
+}
+
+.normal {
+    color: var(--success);
+    font-weight: 700;
+}
+
+.hidden {
+    display: none;
+}
+
+.message {
+    min-height: 22px;
+    margin: 0;
+    font-weight: 700;
+}
+
+.message.success {
+    color: var(--success);
+}
+
+.message.error {
+    color: var(--danger);
+}
+
+.chat-log {
+    height: 470px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-right: 4px;
+}
+
+.bot-message,
+.user-message {
+    max-width: 92%;
+    border-radius: 8px;
+    padding: 12px 14px;
+    line-height: 1.45;
+}
+
+.bot-message {
+    align-self: flex-start;
+    background: #edf4ff;
+}
+
+.user-message {
+    align-self: flex-end;
+    color: #fff;
+    background: var(--primary);
+}
+
+.voice-controls {
+    display: grid;
+    grid-template-columns: 92px 104px minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.voice-controls button {
+    min-height: 40px;
+    padding: 8px 10px;
+}
+
+.voice-controls span {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.chat-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 92px;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.chat-form button {
+    min-height: 46px;
+}
+
+@media (max-width: 860px) {
+    .app-shell {
+        grid-template-columns: 1fr;
+        margin: 16px auto;
+    }
+
+    .two-column {
+        grid-template-columns: 1fr;
+    }
+
+    .quick-symptoms {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .voice-controls {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .voice-controls span {
+        grid-column: 1 / -1;
+    }
+}

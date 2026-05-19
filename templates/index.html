@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hospital AI Booking</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <main class="app-shell">
+        <section class="booking-panel">
+            <div>
+                <p class="eyebrow">AI Hospital Desk</p>
+                <h1>Book the right doctor faster</h1>
+            </div>
+
+            <form id="appointmentForm">
+                <label>
+                    Patient Name
+                    <input name="patient_name" type="text" required>
+                </label>
+
+                <div class="two-column">
+                    <label>
+                        Email
+                        <input name="patient_email" type="email" required>
+                    </label>
+                    <label>
+                        Phone
+                        <input name="patient_phone" type="tel" required>
+                    </label>
+                </div>
+
+                <label>
+                    Symptoms
+                    <textarea name="symptoms" id="symptoms" rows="5" placeholder="Example: chest pain and shortness of breath" required></textarea>
+                </label>
+
+                <div class="quick-symptoms" aria-label="Quick symptom examples">
+                    <button type="button" data-symptom="chest pain and shortness of breath">Chest pain</button>
+                    <button type="button" data-symptom="skin rash and itching">Skin rash</button>
+                    <button type="button" data-symptom="headache and dizziness">Headache</button>
+                    <button type="button" data-symptom="knee joint pain">Joint pain</button>
+                </div>
+
+                <button type="button" id="recommendBtn">Get AI Recommendation</button>
+
+                <div id="recommendation" class="recommendation hidden"></div>
+
+                <div class="two-column">
+                    <label>
+                        Doctor
+                        <select name="doctor_id" id="doctorSelect" required></select>
+                    </label>
+                    <label>
+                        Appointment Date
+                        <input name="appointment_date" type="date" required>
+                    </label>
+                </div>
+
+                <label>
+                    Available Slot
+                    <select name="appointment_time" id="timeSlotSelect" required>
+                        <option value="">Select doctor and date first</option>
+                    </select>
+                </label>
+
+                <button type="submit">Book Appointment</button>
+                <p id="formMessage" class="message"></p>
+            </form>
+        </section>
+
+        <section class="chat-panel">
+            <h2>Appointment Assistant</h2>
+            <div class="voice-controls">
+                <button type="button" id="voiceBtn">Start Call</button>
+                <button type="button" id="muteBtn" aria-pressed="false">Voice On</button>
+                <span id="voiceStatus">Voice ready in Chrome or Edge.</span>
+            </div>
+            <div id="chatLog" class="chat-log">
+                <div class="bot-message">
+                    Tell me your symptoms or ask a booking question. I can recommend a doctor, explain availability, and help you prepare.
+                </div>
+            </div>
+            <form id="chatForm" class="chat-form">
+                <input id="chatInput" type="text" placeholder="Ask the assistant..." autocomplete="off">
+                <button type="submit">Send</button>
+            </form>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
